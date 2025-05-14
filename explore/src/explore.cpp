@@ -97,6 +97,9 @@ Explore::Explore()
                                                                      10);
   }
 
+  // custom publisher
+  done_publisher_ = this->create_publisher<std_msgs::msg::Bool>("explore/done", 10);
+
   // Subscription to resume or stop exploration
   resume_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
       "explore/resume", 10,
@@ -398,7 +401,11 @@ void Explore::stop(bool finished_exploring)
   RCLCPP_INFO(logger_, "Exploration stopped.");
   move_base_client_->async_cancel_all_goals();
   exploring_timer_->cancel();
-
+  if (finished_exploring && done_publisher_) {
+    std_msgs::msg::Bool msg;
+    msg.data = true;
+    done_publisher_->publish(msg);
+  }
   if (return_to_init_ && finished_exploring) {
     returnToInitialPose();
   }

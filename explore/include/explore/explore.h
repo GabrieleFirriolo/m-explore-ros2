@@ -107,6 +107,9 @@ private:
   void reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                    const geometry_msgs::msg::Point& frontier_goal);
 
+  // custom publisher
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr done_publisher_;
+
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       marker_array_publisher_;
   rclcpp::Logger logger_ = rclcpp::get_logger("ExploreNode");
