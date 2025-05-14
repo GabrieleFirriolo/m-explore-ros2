@@ -77,6 +77,8 @@ protected:
    */
   double frontierCost(const Frontier& frontier);
 
+  int astarCost(uint startx, uint starty, uint goalx, uint goaly);
+
 private:
   nav2_costmap_2d::Costmap2D* costmap_;
   unsigned char* map_;

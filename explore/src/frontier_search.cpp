@@ -22,44 +22,83 @@ FrontierSearch::FrontierSearch(nav2_costmap_2d::Costmap2D* costmap,
 {
 }
 
+double euclideanDist(uint x1, uint y1, uint x2, uint y2) {
+  return sqrt(pow((double(x1) - double(x2)), 2.0) + pow((double(y1) - double(y2)), 2.0));
+}
+
+int FrontierSearch::astarCost(uint startx, uint starty, uint goalx, uint goaly) {
+  struct Node {
+    uint x, y;
+    int cost;
+    double heuristic;
+    bool operator<(const Node& other) const {
+      return (cost + heuristic) > (other.cost + other.heuristic);
+    }
+  };
+
+  std::priority_queue<Node> open_set;
+  std::set<std::pair<uint, uint>> closed_set;
+
+  open_set.push({startx, starty, 0, euclideanDist(startx, starty, goalx, goaly)});
+
+  while (!open_set.empty()) {
+    Node current = open_set.top();
+    open_set.pop();
+
+    if (current.x == goalx && current.y == goaly) {
+      return current.cost;
+    }
+
+    if (closed_set.count({current.x, current.y})) {
+      continue;
+    }
+    closed_set.insert({current.x, current.y});
+
+    if (closed_set.size() > 20000) {
+      return 10000;
+    }
+
+    uint idx = costmap_->getIndex(current.x, current.y);
+    for (uint nbr : nhood4(idx, *costmap_)) {
+      if (map_[nbr] != LETHAL_OBSTACLE) {
+        uint nx, ny;
+        costmap_->indexToCells(nbr, nx, ny);
+        if (!closed_set.count({nx, ny})) {
+          open_set.push({nx, ny, current.cost + 1, euclideanDist(nx, ny, goalx, goaly)});
+        }
+      }
+    }
+  }
+
+  return -1; // Percorso non trovato
+}
+
 std::vector<Frontier>
 FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
 {
   std::vector<Frontier> frontier_list;
 
-  // Sanity check that robot is inside costmap bounds before searching
   unsigned int mx, my;
   if (!costmap_->worldToMap(position.x, position.y, mx, my)) {
-    RCLCPP_ERROR(rclcpp::get_logger("FrontierSearch"), "Robot out of costmap "
-                                                       "bounds, cannot search "
-                                                       "for frontiers");
+    RCLCPP_ERROR(rclcpp::get_logger("FrontierSearch"), "Robot out of costmap bounds");
     return frontier_list;
   }
 
-  // make sure map is consistent and locked for duration of search
-  std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> lock(
-      *(costmap_->getMutex()));
-
+  std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> lock(*(costmap_->getMutex()));
   map_ = costmap_->getCharMap();
   size_x_ = costmap_->getSizeInCellsX();
   size_y_ = costmap_->getSizeInCellsY();
 
-  // initialize flag arrays to keep track of visited and frontier cells
   std::vector<bool> frontier_flag(size_x_ * size_y_, false);
   std::vector<bool> visited_flag(size_x_ * size_y_, false);
-
-  // initialize breadth first search
   std::queue<unsigned int> bfs;
 
-  // find closest clear cell to start search
   unsigned int clear, pos = costmap_->getIndex(mx, my);
   if (nearestCell(clear, pos, FREE_SPACE, *costmap_)) {
     bfs.push(clear);
   } else {
     bfs.push(pos);
-    RCLCPP_WARN(rclcpp::get_logger("FrontierSearch"), "Could not find nearby "
-                                                      "clear cell to start "
-                                                      "search");
+    RCLCPP_WARN(rclcpp::get_logger("FrontierSearch"), "Fallback to current position");
   }
   visited_flag[bfs.front()] = true;
 
@@ -67,33 +106,46 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
     unsigned int idx = bfs.front();
     bfs.pop();
 
-    // iterate over 4-connected neighbourhood
     for (unsigned nbr : nhood4(idx, *costmap_)) {
-      // add to queue all free, unvisited cells, use descending search in case
-      // initialized on non-free cell
       if (map_[nbr] <= map_[idx] && !visited_flag[nbr]) {
         visited_flag[nbr] = true;
         bfs.push(nbr);
-        // check if cell is new frontier cell (unvisited, NO_INFORMATION, free
-        // neighbour)
       } else if (isNewFrontierCell(nbr, frontier_flag)) {
         frontier_flag[nbr] = true;
         Frontier new_frontier = buildNewFrontier(nbr, pos, frontier_flag);
-        if (new_frontier.size * costmap_->getResolution() >=
-            min_frontier_size_) {
+        if (new_frontier.size * costmap_->getResolution() >= min_frontier_size_) {
           frontier_list.push_back(new_frontier);
         }
       }
     }
   }
 
-  // set costs of frontiers
-  for (auto& frontier : frontier_list) {
+  // Calcolo distanza con A* e riordino frontiere
+  std::vector<Frontier> backup = frontier_list;
+  int count = 0;
+  for (auto & frontier : frontier_list) {
+    if (count++ < 15) {
+      unsigned int gx, gy;
+      if (costmap_->worldToMap(frontier.centroid.x, frontier.centroid.y, gx, gy)) {
+        int dist = astarCost(mx, my, gx, gy);
+        frontier.min_distance = (dist < 0) ? 10000 : static_cast<double>(dist);
+      } else {
+        frontier.min_distance = 10000;
+      }
+    } else {
+      frontier.min_distance = 10000;
+    }
     frontier.cost = frontierCost(frontier);
   }
-  std::sort(
-      frontier_list.begin(), frontier_list.end(),
-      [](const Frontier& f1, const Frontier& f2) { return f1.cost < f2.cost; });
+
+  std::sort(frontier_list.begin(), frontier_list.end(),
+            [](const Frontier& f1, const Frontier& f2) {
+              return f1.cost < f2.cost;
+            });
+
+  if (!frontier_list.empty() && frontier_list[0].min_distance == 10000) {
+    return backup;  // fallback se A* fallisce
+  }
 
   return frontier_list;
 }
