@@ -122,18 +122,23 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
 
   // Calcolo distanza con A* e riordino frontiere
   std::vector<Frontier> backup = frontier_list;
-  int count = 0;
   for (auto & frontier : frontier_list) {
-    if (count++ < 15) {
-      unsigned int gx, gy;
-      if (costmap_->worldToMap(frontier.centroid.x, frontier.centroid.y, gx, gy)) {
+    unsigned int gx, gy;
+    if (!costmap_->worldToMap(frontier.middle.x, frontier.middle.y, gx, gy) || 
+        costmap_->getCost(gx, gy) >= LETHAL_OBSTACLE) {
+        frontier.min_distance = 10000;  // Segnala come non raggiungibile
+        frontier.cost = frontierCost(frontier);
+        continue;  // Passa alla prossima frontiera
+    }
+    // 2. Calcola A* solo per le prime N frontiere 
+    constexpr int max_astar_frontiers = 15;  
+    static int count = 0;
+    if (count++ < max_astar_frontiers) {
         int dist = astarCost(mx, my, gx, gy);
         frontier.min_distance = (dist < 0) ? 10000 : static_cast<double>(dist);
-      } else {
-        frontier.min_distance = 10000;
-      }
     } else {
-      frontier.min_distance = 10000;
+        // Per le frontiere oltre il limite, usa distanza euclidea come fallback
+        frontier.min_distance = euclideanDist(mx, my, gx, gy);
     }
     frontier.cost = frontierCost(frontier);
   }
@@ -183,7 +188,7 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
     // try adding cells in 8-connected neighborhood to frontier
     for (unsigned int nbr : nhood8(idx, *costmap_)) {
       // check if neighbour is a potential frontier cell
-      if (isNewFrontierCell(nbr, frontier_flag)) {
+      if (isNewFrontierCell(nbr, frontier_flag) && map_[nbr] != LETHAL_OBSTACLE) {
         // mark cell as frontier
         frontier_flag[nbr] = true;
         unsigned int mx, my;
