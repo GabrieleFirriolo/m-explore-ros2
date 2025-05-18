@@ -147,6 +147,29 @@ WIKI
 ----
 No wiki yet.
 
+## Custom Modifications in This Fork
+
+This fork introduces additional features for improved control and integration in automated or scripted workflows:
+
+### A\* Frontier Selection
+
+* The frontier evaluation process has been extended with an **A\*-based path cost estimation**.
+* For each candidate frontier (up to a configurable maximum), an A\* search is executed over the costmap grid to estimate the **true path cost** from the robot’s current position to the frontier.
+* If A\* fails to find a path (e.g., blocked by obstacles), the frontier is marked as unreachable and deprioritized.
+* For remaining candidates, the fallback **Euclidean distance** is used.
+
+
+### Exploration Completion Signal
+
+* A new publisher sends a signal when all reachable frontiers have been explored:
+
+  ```
+  /explore/done  [std_msgs/Bool]
+  ```
+
+  This topic can be used by external scripts or controllers to detect when exploration is complete and trigger cleanup, shutdown, or data saving.
+
+
 COPYRIGHT
 ---------
 
